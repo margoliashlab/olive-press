@@ -1,0 +1,48 @@
+#!/usr/bin/python
+import h5py
+import arf
+import argparse
+import numpy as np
+
+"""Copies data in arf file to new file with no chunking"""
+
+def get_datasets(group):
+    for entry in group.itervalues():
+        if isinstance(entry,h5py.Dataset):
+            yield entry
+        elif isinstance(entry,h5py.Group):
+            for dataset in get_datasets(entry):
+                yield dataset
+        
+        
+
+if __name__=='__main__':
+    p = argparse.ArgumentParser(prog="unchunk",
+                                description="Copies data in arf file to new file with no chunking")
+    p.add_argument("chunked_arf",help="Arf file with chunked dataset")
+    p.add_argument("new_arf", help="Name of new arf file with no chunking")
+
+    options = p.parse_args()
+    with h5py.File(options.chunked_arf,'r+') as chunked_file:
+        with h5py.File(options.new_arf,'w-') as new_file:
+            for dset in get_datasets(chunked_file):
+                if dset.name == '/jill_log':
+                    dtype = np.dtype([('sec','<i8'), ('usec', '<i8'),
+                                  ('message','S%d'%(max(len(m) for m in dset['message'])))])
+                    data = np.array(dset[:], dtype=dtype)
+                    new_file.create_dataset(dset.name,data=data)
+
+                elif (dset.chunks is not None and
+                    np.issubdtype(dset.dtype,(np.float,np.integer))):
+                    try:
+                        new_dset = new_file.create_dataset(dset.name,data=dset[:])
+                    except:
+                        print("Warning: Dataset %s cannot be read and will not be copied"%(dset.name))
+                        continue
+                    for key,value in dset.attrs.iteritems():
+                        new_dset.attrs[key] = value
+                else:
+                    new_file.copy(dset,dset.name)
+                    
+                
+                    
