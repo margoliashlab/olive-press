@@ -5,7 +5,7 @@ Data integrety is checked, then the original file is replaced, if the `--replace
 The program `olive-press` improves both the size of data on disk (75% to 40% of original size)  and speed of analysis by removing
 "chunking" in the storage of arrays.
 
-![compression][compression.png]
+![compression](compression.png)
 
 ## installation
 `python setup.py install`
