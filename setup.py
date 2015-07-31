@@ -37,7 +37,7 @@ setup(
         url='http://github.com/kjbrown/olive-press/',
         license='GPL License',
         author='Kyler Brown',
-        version='1.2.1',
+        version='1.2.2',
         tests_require=['pytest'],
         install_requires=['h5py',
                           'numpy',
