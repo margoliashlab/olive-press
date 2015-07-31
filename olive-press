@@ -11,18 +11,23 @@ import shutil
 
 """Copies data in arf file to new file with no chunking and compressed data"""
 
-def get_datasets(group):
+def walk_structure(group):
+    """recursivley returns all subobjects of an h5py object"""
     for entry in group.itervalues():
-        if isinstance(entry,h5py.Dataset):
-            yield entry
-        elif isinstance(entry,h5py.Group):
-            for dataset in get_datasets(entry):
-                yield dataset
-        
-        
+        yield entry
+        if isinstance(entry,h5py.Group):
+            for i in walk_structure(entry):
+                yield i
+
+
+
+def copy_attributes(a, b):
+    """copies h5py attributes from object a to object b"""
+    for key,value in a.attrs.iteritems():
+        b.attrs[key] = value
 
 def unchunk(chunked_file, new_file, compression_level, v):
-    for dset in get_datasets(chunked_file):
+    for dset in walk_structure(chunked_file):
         if v:
             print(dset)
         if dset.name == '/jill_log':
@@ -33,23 +38,27 @@ def unchunk(chunked_file, new_file, compression_level, v):
                                   ('message','S%d'%(max(len(m) for m in dset['message'])))])
                 data = np.array(dset[:], dtype=dtype)
                 new_file.create_dataset(dset.name,data=data, compression=compression_level)
-
+        elif isinstance(dset, h5py.Group):
+            # create an group (entry) and copy all attributes
+            new_entry = new_file.create_group(dset.name)
+            copy_attributes(dset, new_entry)
         elif np.issubdtype(dset.dtype,(np.float,np.integer)):
             try:
                 new_dset = new_file.create_dataset(dset.name,data=dset[:], compression=compression_level)
             except:
                 print("Warning: Dataset %s cannot be read and will not be copied"%(dset.name))
                 return False
-            for key,value in dset.attrs.iteritems():
-                new_dset.attrs[key] = value
+            copy_attributes(dset, new_dset)
+            new_dset.attrs["compression"] = compression_level
         else:
+            # must be some unusual dataset, don't compress
             new_file.copy(dset,dset.name)
     new_file.attrs["olive-pressed"] = compression_level
     return True
 
 
 def verify_file_contents(chunked_file, new_file, v):
-    for dset in get_datasets(chunked_file):
+    for dset in walk_structure(chunked_file):
         for key in dset.attrs:
             if key not in new_file[dset.name].attrs:
                 print("attribute {} not an attribute of {}{}".format(key, new_file, dset.name))
@@ -63,11 +72,11 @@ def verify_file_contents(chunked_file, new_file, v):
                 print("attribute value {} not equal when copied to {}{}"
                           .format(key, new_file, dset.name))
                 return False
-            if isinstance(dset, h5py.Dataset):
-                if not  np.array_equal(dset.value, new_file[dset.name].value):
-                    print("Dataset value {} not equal when copied to {}{}"
-                          .format(key, new_file, dset.name))
-                    return False
+        if isinstance(dset, h5py.Dataset):
+            if not  np.array_equal(dset.value, new_file[dset.name].value):
+                print("Dataset value {} not equal when copied to {}{}"
+                      .format(key, new_file, dset.name))
+                return False
     return True
 
 
@@ -81,11 +90,9 @@ def already_pressed(fname, compression_level):
 
 
 
-def main(chunked_arfs, compression_level, v, replace):
-    
+def main(chunked_arfs, compression_level, v, keep, doublecheck=True):
     for chunked_arf in chunked_arfs:
         new_arf = chunked_arf + ".olive-press.arf"
-        copy_success, copy_double_check = False, False
         if already_pressed(chunked_arf, compression_level):
             if v:
                 print("{} already compressed, skipping..."
@@ -99,12 +106,14 @@ def main(chunked_arfs, compression_level, v, replace):
             if not copy_success:
                 print("copy of {} failed, compare with {}".format(chunked_arf, new_arf))
                 continue
-            copy_double_check = verify_file_contents(chunked_file, new_file, v)
+            if doublecheck:
+                copy_double_check = verify_file_contents(chunked_file, new_file, v)
+            else:
+                copy_double_check = True
         if not copy_double_check:
             print("copy of {} double check failed, compare with {}".format(chunked_arf, new_arf))
             continue
-        
-        elif replace:
+        elif not keep:
             shutil.move(new_arf, chunked_arf)
             if v:
                 print("{} replaced with {}".format(chunked_arf, new_arf))
@@ -112,14 +121,17 @@ def main(chunked_arfs, compression_level, v, replace):
 
 if __name__=='__main__':
     compression_default = 9
-    p = argparse.ArgumentParser(prog="unchunk",
+    p = argparse.ArgumentParser(prog="olive-press",
                                 description="Copies data in arf file to new file with no chunking")
     p.add_argument("chunked_arf", help="input Arf file[s]", nargs="+")
     p.add_argument("-c", "--compression",
                    help="compression level, 0 = none (fast), 9 = high (slow), default: {}".format(compression_default),
                    type=int, default=compression_default)
     p.add_argument("-v", "--verbose", action="store_true", default=False)
-    p.add_argument("--replace", help="replaces old arf file with new, compressed arf file", default=False,
+    #p.add_argument("--extra-safe", action="store_true", default=False,
+    #               help="double checks equality of every number in the new and old copy. Only works with newer versions of numpy.")
+    p.add_argument("--keep",
+                   help="does not replace old arf file with new, compressed arf file", default=False,
                    action="store_true")
     options = p.parse_args()
-    main(options.chunked_arf, options.compression, options.verbose, options.replace)
+    main(options.chunked_arf, options.compression, options.verbose, options.keep)
